@@ -50,6 +50,7 @@ def init_db() -> None:
                 creator_username TEXT,
                 reminder_48_sent INTEGER NOT NULL DEFAULT 0,
                 reminder_24_sent INTEGER NOT NULL DEFAULT 0,
+                reminder_8am_sent INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             )
             """
@@ -63,6 +64,12 @@ def init_db() -> None:
             )
             """
         )
+        # Migration for databases created before the 8am-same-day reminder existed.
+        existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(events)")}
+        if "reminder_8am_sent" not in existing_columns:
+            conn.execute(
+                "ALTER TABLE events ADD COLUMN reminder_8am_sent INTEGER NOT NULL DEFAULT 0"
+            )
 
 
 def upsert_user(username: Optional[str], chat_id: int) -> None:
@@ -175,7 +182,14 @@ def delete_event(event_id: int) -> None:
         conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
 
 
+_REMINDER_COLUMNS = {
+    "48h": "reminder_48_sent",
+    "24h": "reminder_24_sent",
+    "8am": "reminder_8am_sent",
+}
+
+
 def mark_reminder_sent(event_id: int, stage: str) -> None:
-    column = "reminder_48_sent" if stage == "48h" else "reminder_24_sent"
+    column = _REMINDER_COLUMNS[stage]
     with get_conn() as conn:
         conn.execute(f"UPDATE events SET {column} = 1 WHERE id = ?", (event_id,))

@@ -54,10 +54,17 @@ async def schedule_reminders(context: ContextTypes.DEFAULT_TYPE, event_row) -> N
     event_time = datetime.fromisoformat(event_row["event_time"])
     now = datetime.now(TZ)
 
+    event_time_local = event_time.astimezone(TZ)
+    day_8am = event_time_local.replace(hour=8, minute=0, second=0, microsecond=0)
+
     stages = [
         ("48h", event_time - timedelta(hours=48), bool(event_row["reminder_48_sent"])),
         ("24h", event_time - timedelta(hours=24), bool(event_row["reminder_24_sent"])),
     ]
+    # Skip the "8am same day" reminder if the event itself happens at/before 8am.
+    if day_8am < event_time_local:
+        stages.append(("8am", day_8am, bool(event_row["reminder_8am_sent"])))
+
     for stage, fire_at, already_sent in stages:
         if already_sent or event_time <= now:
             continue
@@ -76,7 +83,7 @@ async def schedule_reminders(context: ContextTypes.DEFAULT_TYPE, event_row) -> N
 
 
 def cancel_jobs(context: ContextTypes.DEFAULT_TYPE, event_id: int) -> None:
-    for stage in ("48h", "24h"):
+    for stage in ("48h", "24h", "8am"):
         for job in context.job_queue.get_jobs_by_name(job_name(event_id, stage)):
             job.schedule_removal()
 
@@ -90,14 +97,22 @@ async def send_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
     if event_row is None:
         return
 
-    label = "48 часов" if stage == "48h" else "24 часа"
     when_str = format_event_datetime(event_row["event_time"])
-    text = (
-        f"⏰ Напоминание: через {label} состоится событие!\n\n"
-        f"📌 {event_row['name']}\n"
-        f"🕒 {when_str}\n"
-        f"📝 {event_row['description'] or '—'}"
-    )
+    if stage == "8am":
+        text = (
+            f"📅 Напоминание: сегодня состоится событие!\n\n"
+            f"📌 {event_row['name']}\n"
+            f"🕒 {when_str}\n"
+            f"📝 {event_row['description'] or '—'}"
+        )
+    else:
+        label = "48 часов" if stage == "48h" else "24 часа"
+        text = (
+            f"⏰ Напоминание: через {label} состоится событие!\n\n"
+            f"📌 {event_row['name']}\n"
+            f"🕒 {when_str}\n"
+            f"📝 {event_row['description'] or '—'}"
+        )
 
     chat_ids = set()
     chat_ids.add(event_row["creator_chat_id"])
